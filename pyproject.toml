@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optpricing"
+version = "0.1.0"
+description = "European options pricing and validation toolkit (Black-Scholes, Monte Carlo, Binomial Tree)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Dimitris" }]
+keywords = ["options", "black-scholes", "monte-carlo", "binomial-tree", "quantitative-finance"]
+dependencies = [
+    "numpy>=1.23,<3.0",
+    "scipy>=1.9,<2.0",
+    "pandas>=1.5,<3.0",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.6", "plotly>=5.10"]
+app = ["streamlit>=1.25"]
+data = ["yfinance>=0.2", "openpyxl>=3.1"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "black>=23.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

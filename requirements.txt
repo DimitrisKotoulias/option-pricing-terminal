@@ -1,0 +1,6 @@
+# Core runtime dependencies (mirrors [project.dependencies] in pyproject.toml).
+# For development, prefer:  pip install -e ".[dev]"
+# For notebooks/app/data:   pip install -e ".[viz,app,data]"
+numpy>=1.23,<3.0
+scipy>=1.9,<2.0
+pandas>=1.5,<3.0
