@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 from optpricing import (
@@ -71,6 +72,36 @@ def inject_css() -> None:
             display: none !important;
         }}
 
+        /* ---- motion primitives ------------------------------------------- */
+        @keyframes card-in {{
+            from {{ opacity: 0; transform: translateY(8px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+        @keyframes fade-scale-in {{
+            from {{ opacity: 0; transform: scale(.98); }}
+            to   {{ opacity: 1; transform: scale(1); }}
+        }}
+        @keyframes rule-shimmer {{
+            0%, 100% {{ background-position: 0% 50%; }}
+            50%      {{ background-position: 100% 50%; }}
+        }}
+        @keyframes pulse-ring {{
+            0%   {{ transform: scale(.6); opacity: .55; }}
+            70%  {{ transform: scale(1.9); opacity: 0; }}
+            100% {{ transform: scale(1.9); opacity: 0; }}
+        }}
+        @keyframes shimmer-sweep {{
+            0%   {{ background-position: -400px 0; }}
+            100% {{ background-position: 400px 0; }}
+        }}
+        @media (prefers-reduced-motion: reduce) {{
+            *, *::before, *::after {{
+                animation-duration: .001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .001ms !important;
+            }}
+        }}
+
         html, body, [data-testid="stAppViewContainer"], .stApp {{
             background: {BG_PAGE};
             color: {INK};
@@ -105,7 +136,12 @@ def inject_css() -> None:
             font-size: .9rem; color: {INK_2}; margin-top: .4rem;
         }}
         .hdr-rule {{
-            height: 1px; background: {BORDER}; margin: 1.0rem 0 1.0rem;
+            height: 2px; margin: 1.0rem 0 1.0rem; border-radius: 2px;
+            background: linear-gradient(90deg,
+                {BORDER} 0%, {CALL} 22%, {ACCENT} 45%, {PUT} 68%, {BORDER} 100%);
+            background-size: 220% 100%;
+            animation: rule-shimmer 7s ease-in-out infinite;
+            opacity: .55;
         }}
         .section-label {{
             font-size: .72rem; font-weight: 600; letter-spacing: .18em;
@@ -122,6 +158,15 @@ def inject_css() -> None:
             padding: 1.0rem 1.1rem;
             height: 100%;
             box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 4px 10px rgba(15,23,42,.06);
+            animation: card-in .45s cubic-bezier(.16,1,.3,1) both;
+            animation-delay: calc(var(--card-i, 0) * 45ms);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        }}
+        .card:hover {{
+            transform: translateY(-2px);
+            border-color: color-mix(in srgb, var(--accent, {ACCENT}) 45%, {BORDER});
+            box-shadow: 0 1px 2px rgba(15,23,42,.05),
+                        0 10px 24px rgba(15,23,42,.10);
         }}
         .card-accent {{ border-top: 2px solid var(--accent, {ACCENT}); }}
         .card-label {{
@@ -175,8 +220,13 @@ def inject_css() -> None:
             border-radius: 6px; padding: .5rem 1.1rem;
             font-family: {FONT};
             width: 100%;
+            transition: background-color .15s ease, transform .1s ease, box-shadow .15s ease;
         }}
-        .stButton > button:hover {{ background: #1d4ed8; color: #fff; }}
+        .stButton > button:hover {{
+            background: #1d4ed8; color: #fff;
+            box-shadow: 0 4px 12px rgba(37,99,235,.28);
+        }}
+        .stButton > button:active {{ transform: scale(.98); }}
 
         /* status banners */
         .status {{
@@ -193,7 +243,31 @@ def inject_css() -> None:
             color: {CRIT};
         }}
         .status-dot {{
+            position: relative;
             width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+        }}
+        .status-dot::after {{
+            content: ""; position: absolute; inset: -4px; border-radius: 50%;
+            border: 1px solid currentColor;
+            animation: pulse-ring 1.8s ease-out infinite;
+        }}
+
+        /* skeleton placeholder shown while market data loads */
+        .skeleton {{
+            border-radius: 8px;
+            background: linear-gradient(90deg,
+                {BG_PANEL} 0%, rgba(255,255,255,.9) 50%, {BG_PANEL} 100%);
+            background-size: 800px 100%;
+            animation: shimmer-sweep 1.4s linear infinite;
+            border: 1px solid {BORDER};
+        }}
+
+        /* tab panels + charts fade in whenever they become visible */
+        [data-testid="stTabs"] [role="tabpanel"] {{
+            animation: fade-scale-in .3s ease both;
+        }}
+        [data-testid="stPlotlyChart"] {{
+            animation: fade-scale-in .5s cubic-bezier(.16,1,.3,1) both;
         }}
         </style>
         """
@@ -225,8 +299,15 @@ def style_fig(fig: go.Figure, height: int | None = None) -> go.Figure:
     return fig
 
 
+_card_sequence = 0  # reset to 0 every Streamlit rerun (module re-executes top-to-bottom)
+
+
 def card(label: str, metrics: list[dict], accent: str = ACCENT) -> str:
     """Render a metric card with one or more value columns."""
+    global _card_sequence
+    stagger_index = _card_sequence
+    _card_sequence += 1
+
     cells = "".join(
         f'<div class="card-metric">'
         f'<div class="card-sub">{m["sub"]}</div>'
@@ -236,9 +317,58 @@ def card(label: str, metrics: list[dict], accent: str = ACCENT) -> str:
         for m in metrics
     )
     return (
-        f'<div class="card card-accent" style="--accent:{accent};">'
+        f'<div class="card card-accent" style="--accent:{accent}; --card-i:{stagger_index};">'
         f'<div class="card-label">{label}</div>'
         f'<div class="card-row">{cells}</div></div>'
+    )
+
+
+def play_entrance_count_up() -> None:
+    """One-shot count-up animation for `.card-value` numbers on first load.
+
+    Runs via a tiny script component (`window.parent.document` reaches out of
+    the component's iframe into the app DOM — the standard escape hatch for
+    injecting real JS into Streamlit, since `st.html`/`st.markdown` strip
+    <script> tags). Gated to the first script run per session via
+    `st.session_state` so it never re-fires and fights the user while they
+    are dragging sliders; if the iframe ever can't reach the parent document
+    the try/catch just leaves the numbers as-is, so it fails safe.
+    """
+    components.html(
+        r"""
+        <script>
+        (function() {
+            try {
+                if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                    return;
+                }
+                var doc = window.parent.document;
+                var els = doc.querySelectorAll('.card-value');
+                els.forEach(function(el) {
+                    var raw = el.textContent.trim();
+                    var m = raw.match(/^([^0-9\-]*)(-?[0-9]+\.?[0-9]*)(.*)$/);
+                    if (!m) return;
+                    var prefix = m[1], numStr = m[2], suffix = m[3];
+                    var target = parseFloat(numStr);
+                    if (isNaN(target)) return;
+                    var decimals = (numStr.split('.')[1] || '').length;
+                    var duration = 650;
+                    var startTime = performance.now();
+                    function tick(now) {
+                        var p = Math.min((now - startTime) / duration, 1);
+                        var eased = 1 - Math.pow(1 - p, 3);
+                        el.textContent = prefix + (target * eased).toFixed(decimals) + suffix;
+                        if (p < 1) { requestAnimationFrame(tick); }
+                        else { el.textContent = raw; }
+                    }
+                    requestAnimationFrame(tick);
+                });
+            } catch (e) { /* parent DOM unreachable — leave static values */ }
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
     )
 
 
@@ -424,9 +554,14 @@ with col_center:
 
     with tab_smile:
         smile_ticker = st.selectbox("Select ticker for Volatility Smile:", ["^SPX", "^NDX", "^RUT"], key="smile_ticker")
+        smile_skeleton = st.empty()
+        smile_skeleton.markdown(
+            '<div class="skeleton" style="height:450px;"></div>', unsafe_allow_html=True
+        )
         try:
             calls_df, puts_df, smile_spot, smile_expiry = fetch_option_chain(smile_ticker, use_cache=True)
-            
+            smile_skeleton.empty()
+
             calls_df = calls_df.copy()
             puts_df = puts_df.copy()
             calls_df["mid"] = (calls_df["bid"] + calls_df["ask"]) / 2
@@ -472,6 +607,7 @@ with col_center:
             else:
                 st.info("No common strikes found for volatility smile.")
         except Exception as e:
+            smile_skeleton.empty()
             st.warning(f"Could not load volatility smile: {e}")
 
 # --------------------------------------------------------------------------- #
@@ -501,8 +637,13 @@ with col_right:
         )
 
     hist_ticker = st.selectbox("Select Ticker for Volatility Analysis:", ["^SPX", "^NDX", "^RUT"], key="hist_ticker")
+    hist_skeleton = st.empty()
+    hist_skeleton.markdown(
+        '<div class="skeleton" style="height:280px;"></div>', unsafe_allow_html=True
+    )
     try:
         hist_df = fetch_10y_historical_data(hist_ticker, use_cache=True)
+        hist_skeleton.empty()
         if not hist_df.empty:
             hist_df["Returns"] = np.log(hist_df["Close"] / hist_df["Close"].shift(1))
             hist_df["Vol30"] = hist_df["Returns"].rolling(30).std() * np.sqrt(252) * 100
@@ -537,6 +678,7 @@ with col_right:
             )
             st.plotly_chart(style_fig(fig_hist, height=220), use_container_width=True)
     except Exception as e:
+        hist_skeleton.empty()
         st.warning(f"Could not load historical volatility: {e}")
 
     st.markdown('<div class="section-label" style="margin-top:1.2rem;">8. Historical Data Export</div>', unsafe_allow_html=True)
@@ -568,3 +710,11 @@ with col_right:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_indices_xlsx",
         )
+
+# --------------------------------------------------------------------------- #
+# One-shot entrance flourish: count the metric cards up on first load only,   #
+# so dragging sliders afterwards stays instant and doesn't fight the user.    #
+# --------------------------------------------------------------------------- #
+if not st.session_state.get("_entrance_played"):
+    play_entrance_count_up()
+    st.session_state["_entrance_played"] = True
