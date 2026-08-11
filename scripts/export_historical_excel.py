@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from optpricing.data.market_data_fetcher import export_indices_to_excel
+from optpricing.data.market_data_fetcher import (
+    SUPPORTED_UNDERLYINGS,
+    export_indices_to_excel,
+)
 
-TICKERS = ["^SPX", "^NDX", "^RUT"]  # S&P 500, Nasdaq-100, Russell 2000 indices
+# S&P 500, Nasdaq-100, Russell 2000, Apple, Microsoft
+TICKERS = list(SUPPORTED_UNDERLYINGS)
 
 
 def main() -> None:
@@ -23,19 +27,25 @@ def main() -> None:
         "single multi-sheet Excel workbook."
     )
     parser.add_argument(
-        "--tickers", nargs="+", default=TICKERS,
+        "--tickers",
+        nargs="+",
+        default=TICKERS,
         help="Tickers to export (default: %(default)s)",
     )
     parser.add_argument(
-        "--period", default="max",
+        "--period",
+        default="max",
         help="yfinance history period, e.g. 'max', '10y', '5y' (default: %(default)s)",
     )
     parser.add_argument(
-        "--output", type=Path, default=None,
+        "--output",
+        type=Path,
+        default=None,
         help="Output .xlsx path (default: data/exports/indices_historical_data.xlsx)",
     )
     parser.add_argument(
-        "--no-cache", action="store_true",
+        "--no-cache",
+        action="store_true",
         help="Bypass the on-disk CSV cache and re-fetch from Yahoo Finance",
     )
     args = parser.parse_args()

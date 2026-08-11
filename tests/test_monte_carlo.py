@@ -1,4 +1,6 @@
 import numpy as np
+import pytest
+
 from optpricing import BlackScholesModel, MonteCarloOptionPricer
 
 BS = BlackScholesModel(S=100, K=100, T=1, r=0.05, sigma=0.2)
@@ -50,3 +52,21 @@ def test_generate_paths():
     assert paths.shape == (253, 10)  # 252 steps + 1 starting point
     assert np.all(paths[0] == 100)
 
+
+def test_odd_n_simulations_uses_exact_count():
+    # Antithetic sampling must not silently drop the last draw when the
+    # requested count is odd; the estimate stays finite and valid.
+    n = 100_001
+    mc = MonteCarloOptionPricer(100, 100, 1, 0.05, 0.2, n_simulations=n, seed=11)
+    terminal = mc._simulate_terminal_prices(antithetic=True)
+    assert terminal.shape == (n,)
+    price, std_err = mc.call_price(return_std_error=True)
+    assert np.isfinite(price)
+    assert np.isfinite(std_err) and std_err > 0
+
+
+def test_non_positive_n_simulations_raises():
+    with pytest.raises(ValueError):
+        MonteCarloOptionPricer(100, 100, 1, 0.05, 0.2, n_simulations=0)
+    with pytest.raises(ValueError):
+        MonteCarloOptionPricer(100, 100, 1, 0.05, 0.2, n_simulations=-10)

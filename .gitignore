@@ -219,3 +219,12 @@ __marimo__/
 
 # Runtime-generated market data cache & exports (created on demand, not tracked)
 /data/
+
+# Stray dropped artifacts (screenshots / scratch images / scratch reports) in the
+# repo root only. Root-anchored so legitimate files under docs/, notebooks/, etc.
+# still track.
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.pdf

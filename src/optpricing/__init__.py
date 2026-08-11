@@ -9,6 +9,7 @@ from optpricing.analytics.greeks import Greeks
 from optpricing.analytics.greeks_numerical import GreeksNumerical
 from optpricing.analytics.implied_volatility import ImpliedVolatilityCalculator
 from optpricing.analytics.put_call_parity import PutCallParity
+from optpricing.analytics.volatility_surface import VolatilitySurface
 from optpricing.pricing.binomial_tree import BinomialTreeModel
 from optpricing.pricing.black_scholes import BlackScholesModel
 from optpricing.pricing.monte_carlo import MonteCarloOptionPricer
@@ -23,4 +24,5 @@ __all__ = [
     "GreeksNumerical",
     "ImpliedVolatilityCalculator",
     "PutCallParity",
+    "VolatilitySurface",
 ]

@@ -9,7 +9,7 @@ description = "European options pricing and validation toolkit (Black-Scholes, M
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "Dimitris" }]
+authors = [{ name = "Dimitris Kotoulias" }]
 keywords = ["options", "black-scholes", "monte-carlo", "binomial-tree", "quantitative-finance"]
 dependencies = [
     "numpy>=1.23,<3.0",
@@ -17,9 +17,18 @@ dependencies = [
     "pandas>=1.5,<3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/DimitrisKotoulias/option-pricing-terminal"
+Repository = "https://github.com/DimitrisKotoulias/option-pricing-terminal"
+Issues = "https://github.com/DimitrisKotoulias/option-pricing-terminal/issues"
+
 [project.optional-dependencies]
 viz = ["matplotlib>=3.6", "plotly>=5.10"]
-app = ["streamlit>=1.25"]
+# st.html (1.39+), width="stretch" on st.button (1.49+) and st.iframe (1.58+)
+# are all used by app/; anything older raises AttributeError on first render.
+# streamlit>=1.58 itself requires Python >=3.10, so this extra (unlike the core
+# library, which supports 3.9) is only installable on 3.10+.
+app = ["streamlit>=1.58", "plotly>=5.10"]
 data = ["yfinance>=0.2", "openpyxl>=3.1"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "black>=23.0"]
 

@@ -18,8 +18,11 @@ class MonteCarloOptionPricer(OptionPricingModel):
     def __init__(self, S, K, T, r, sigma, q=0.0, n_simulations=100_000, seed=None):
         super().__init__(S, K, T, r, sigma, q)
         self.n_simulations = int(n_simulations)
+        if self.n_simulations <= 0:
+            raise ValueError("Number of simulations must be positive.")
         # ``default_rng`` seeds correctly for seed=0 (``if seed:`` would skip it)
         # and avoids mutating NumPy's global random state.
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
 
     def _simulate_terminal_prices(self, antithetic=True):
@@ -28,6 +31,10 @@ class MonteCarloOptionPricer(OptionPricingModel):
             half = self.n_simulations // 2
             z = self.rng.standard_normal(half)
             z = np.concatenate([z, -z])
+            if self.n_simulations % 2:
+                # Odd count: the antithetic pairs cover 2*half draws; add one
+                # independent draw so exactly ``n_simulations`` samples are used.
+                z = np.concatenate([z, self.rng.standard_normal(1)])
         else:
             z = self.rng.standard_normal(self.n_simulations)
 
@@ -61,8 +68,14 @@ class MonteCarloOptionPricer(OptionPricingModel):
         """
         if antithetic:
             half = len(discounted) // 2
-            pair_means = 0.5 * (discounted[:half] + discounted[half:])
-            return pair_means.std(ddof=1) / np.sqrt(len(pair_means))
+            pair_means = 0.5 * (discounted[:half] + discounted[half : 2 * half])
+            # An odd sample count leaves one unpaired independent draw at the
+            # end; count it as one more i.i.d. observation.
+            leftover = discounted[2 * half :]
+            obs = (
+                np.concatenate([pair_means, leftover]) if leftover.size else pair_means
+            )
+            return obs.std(ddof=1) / np.sqrt(len(obs))
         return discounted.std(ddof=1) / np.sqrt(len(discounted))
 
     def call_price(self, antithetic=True, return_std_error=False):
@@ -108,22 +121,24 @@ class MonteCarloOptionPricer(OptionPricingModel):
         Returns a 2D array of shape (steps + 1, n_paths) where steps is the number
         of daily steps (252 per year).
         """
-        # Create a local generator to keep it reproducible without mutating state
+        # Draw from a dedicated local generator (seeded identically to the
+        # instance) so path generation is reproducible per call and never
+        # advances the pricing RNG (``self.rng``) state.
+        rng = np.random.default_rng(self.seed)
         steps = int(self.T * 252.0)
         if steps < 1:
             steps = 1
         dt = self.T / steps
         paths = np.zeros((steps + 1, n_paths))
         paths[0] = self.S
-        
+
         # We simulate using the risk-neutral drift
         drift = (self.r - self.q - 0.5 * self.sigma**2) * dt
         diffusion = self.sigma * np.sqrt(dt)
-        
+
         # We can draw the increments
         for t in range(1, steps + 1):
-            z = self.rng.standard_normal(n_paths)
+            z = rng.standard_normal(n_paths)
             paths[t] = paths[t - 1] * np.exp(drift + diffusion * z)
-            
-        return paths
 
+        return paths

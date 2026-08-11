@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from optpricing import BlackScholesModel
@@ -34,3 +35,33 @@ def test_iv_above_upper_bound_returns_none():
 
 def test_iv_zero_price_returns_none():
     assert IV.calculate(0.0, 100, 100, 1, 0.05, "call") is None
+
+
+def test_calculate_vectorized_matches_scalar():
+    S, T, r, sigma = 100.0, 1.0, 0.05, 0.25
+    strikes = np.array([80.0, 90.0, 100.0, 110.0, 120.0])
+    prices = np.array(
+        [BlackScholesModel(S, K, T, r, sigma).call_price() for K in strikes]
+    )
+    ivs = IV.calculate_vectorized(prices, S, strikes, T, r, "call")
+    assert np.allclose(ivs, sigma, atol=1e-4)
+    # And each entry agrees with the scalar Brent solver.
+    for K, price in zip(strikes, prices):
+        assert IV.calculate(price, S, K, T, r, "call") == pytest.approx(sigma, abs=1e-4)
+
+
+def test_calculate_vectorized_put_with_dividend():
+    S, T, r, sigma, q = 100.0, 0.75, 0.03, 0.19, 0.02
+    strikes = np.array([85.0, 100.0, 115.0])
+    prices = np.array(
+        [BlackScholesModel(S, K, T, r, sigma, q).put_price() for K in strikes]
+    )
+    ivs = IV.calculate_vectorized(prices, S, strikes, T, r, "put", q)
+    assert np.allclose(ivs, sigma, atol=1e-4)
+
+
+def test_calculate_vectorized_out_of_bounds_returns_nan():
+    strikes = np.array([100.0, 100.0])
+    prices = np.array([1e6, -5.0])  # above spot (impossible) and non-positive
+    ivs = IV.calculate_vectorized(prices, 100, strikes, 1.0, 0.05, "call")
+    assert np.isnan(ivs).all()

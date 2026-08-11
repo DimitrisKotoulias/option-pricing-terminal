@@ -62,3 +62,46 @@ class GreeksNumerical:
         up = f(model_class, S, K, T, r + h, sigma, q, option_type)
         down = f(model_class, S, K, T, r - h, sigma, q, option_type)
         return (up - down) / (2 * h)
+
+    # -- second-order --------------------------------------------------------
+    @classmethod
+    def vanna(
+        cls, model_class, S, K, T, r, sigma, q=0.0, hs=1e-2, hv=1e-4, option_type="call"
+    ):
+        """Raw d^2Price/(dS dSigma) via a 4-point mixed-partial stencil.
+
+        Matches the *raw* analytical ``Greeks.vanna()`` directly (both unscaled).
+        Identical for calls and puts.
+        """
+        f = cls._price
+        pp = f(model_class, S + hs, K, T, r, sigma + hv, q, option_type)
+        pm = f(model_class, S + hs, K, T, r, sigma - hv, q, option_type)
+        mp = f(model_class, S - hs, K, T, r, sigma + hv, q, option_type)
+        mm = f(model_class, S - hs, K, T, r, sigma - hv, q, option_type)
+        return (pp - pm - mp + mm) / (4 * hs * hv)
+
+    @classmethod
+    def vomma(cls, model_class, S, K, T, r, sigma, q=0.0, h=1e-3, option_type="call"):
+        """Raw d^2Price/dSigma^2 (volga) via a central second difference.
+
+        Uses a larger step than the first-order Greeks for second-derivative
+        stability (as :meth:`gamma` does), but small in volatility terms.
+        Matches raw ``Greeks.vomma()``.
+        """
+        f = cls._price
+        up = f(model_class, S, K, T, r, sigma + h, q, option_type)
+        mid = f(model_class, S, K, T, r, sigma, q, option_type)
+        down = f(model_class, S, K, T, r, sigma - h, q, option_type)
+        return (up - 2 * mid + down) / (h**2)
+
+    @classmethod
+    def charm(cls, model_class, S, K, T, r, sigma, q=0.0, h=1e-4, option_type="call"):
+        """Raw charm = -d(delta)/dT. Divide by 365 to compare with analytical charm.
+
+        Delta at each bumped maturity is itself a central difference in spot.
+        """
+        d_up = cls.delta(model_class, S, K, T + h, r, sigma, q, option_type=option_type)
+        d_down = cls.delta(
+            model_class, S, K, T - h, r, sigma, q, option_type=option_type
+        )
+        return -(d_up - d_down) / (2 * h)

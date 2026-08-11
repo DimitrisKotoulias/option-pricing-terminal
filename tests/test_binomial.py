@@ -34,3 +34,28 @@ def test_american_put_at_least_european():
     ).put_price()
     # Early exercise can only add value to an American option.
     assert amer >= euro - 1e-9
+
+
+def test_non_positive_n_steps_raises():
+    # Guard against dt = T / n_steps blowing up (ZeroDivisionError) or nonsense.
+    with pytest.raises(ValueError):
+        BinomialTreeModel(S=100, K=100, T=1, r=0.05, sigma=0.2, n_steps=0)
+    with pytest.raises(ValueError):
+        BinomialTreeModel(S=100, K=100, T=1, r=0.05, sigma=0.2, n_steps=-5)
+
+
+def test_arbitrage_violation_raises_instead_of_wrong_price():
+    # Small vol vs large drift with few steps pushes the risk-neutral prob out
+    # of [0, 1]. Previously this silently returned an absurd price (~8640 vs a
+    # ~39 Black-Scholes reference); it must now raise instead.
+    bt = BinomialTreeModel(S=100, K=100, T=1, r=0.5, sigma=0.05, n_steps=10)
+    with pytest.raises(ValueError, match="no-arbitrage"):
+        bt.call_price()
+
+
+def test_arbitrage_condition_restored_by_more_steps():
+    # The very same params converge cleanly once dt is small enough that the
+    # per-step vol move outruns the per-step drift.
+    bs = BlackScholesModel(S=100, K=100, T=1, r=0.5, sigma=0.05)
+    bt = BinomialTreeModel(S=100, K=100, T=1, r=0.5, sigma=0.05, n_steps=5000)
+    assert bt.call_price() == pytest.approx(bs.call_price(), abs=1e-2)

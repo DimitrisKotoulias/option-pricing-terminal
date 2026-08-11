@@ -19,13 +19,28 @@ class BinomialTreeModel(OptionPricingModel):
     def __init__(self, S, K, T, r, sigma, q=0.0, n_steps=500, american=False):
         super().__init__(S, K, T, r, sigma, q)
         self.n_steps = int(n_steps)
+        if self.n_steps <= 0:
+            raise ValueError("Number of steps must be positive.")
         self.american = bool(american)
 
     def _tree_parameters(self):
         dt = self.T / self.n_steps
         u = np.exp(self.sigma * np.sqrt(dt))
         d = 1.0 / u
-        p = (np.exp((self.r - self.q) * dt) - d) / (u - d)
+        growth = np.exp((self.r - self.q) * dt)
+        # CRR no-arbitrage requires d < e^{(r-q)dt} < u, otherwise the
+        # risk-neutral probability p leaves [0, 1] and the tree returns
+        # arbitrarily wrong prices. This fails when the per-step drift outruns
+        # the per-step vol move, i.e. sigma*sqrt(dt) <= |(r-q)*dt|; raising
+        # n_steps (smaller dt) restores the condition.
+        if not (d < growth < u):
+            raise ValueError(
+                "CRR no-arbitrage condition violated (risk-neutral probability "
+                "outside [0, 1]): sigma*sqrt(T/n_steps) must exceed "
+                "|(r-q)*T/n_steps|. Increase n_steps or volatility. "
+                f"(u={u:.6g}, d={d:.6g}, e^((r-q)dt)={growth:.6g})"
+            )
+        p = (growth - d) / (u - d)
         return dt, u, d, p
 
     def _payoff(self, stock, option_type):
