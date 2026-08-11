@@ -7,9 +7,23 @@ on:
     branches: [ main ]
 
 jobs:
+  lint:
+    # Formatting is checked once on a modern Python rather than across the
+    # matrix: black's own floor is Python 3.10+, so the 3.9 leg resolves an
+    # older black that formats differently and would fail spuriously.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install black
+      - run: black --check src app tests scripts
+
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
     steps:
@@ -28,7 +42,5 @@ jobs:
         # still supports 3.9, so that leg simply skips the dashboard deps.
         if: matrix.python-version != '3.9'
         run: pip install -e ".[app]"
-      - name: Check formatting
-        run: black --check src app tests scripts
       - name: Run pytest
         run: pytest --cov=optpricing --cov-report=xml
