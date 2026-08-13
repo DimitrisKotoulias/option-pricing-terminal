@@ -30,7 +30,7 @@ viz = ["matplotlib>=3.6", "plotly>=5.10"]
 # library, which supports 3.9) is only installable on 3.10+.
 app = ["streamlit>=1.58", "plotly>=5.10"]
 data = ["yfinance>=0.2", "openpyxl>=3.1"]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "black>=23.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "black>=23.0", "ruff>=0.5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -38,6 +38,27 @@ where = ["src"]
 [tool.black]
 line-length = 88
 target-version = ["py39"]
+
+# black only reformats; it will not tell you about an unused import or a
+# mis-sorted import block. ruff covers both (E/F = pycodestyle + pyflakes,
+# I = import sorting) and is the one extra tool worth the CI second.
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+# black already wraps every line it can; what is left over E501 are string
+# literals it will not split (the injected CSS, long HTML f-strings). Flagging
+# those would only invite worse-reading manual breaks.
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["optpricing"]
+# app/ is a Streamlit entry point, not a package: its modules import each other
+# flat off sys.path. Naming them keeps them in their own group instead of being
+# sorted in among numpy and streamlit.
+known-local-folder = ["_data", "_panels", "_tabs", "_theme"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

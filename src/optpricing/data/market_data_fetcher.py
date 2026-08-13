@@ -12,11 +12,14 @@ Requires the optional ``data`` extra::
 
 from __future__ import annotations
 
+import time
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from optpricing.data.quotes import mid_prices
 
 # repo_root/data/raw  (this file lives at src/optpricing/data/market_data_fetcher.py)
 RAW_DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "raw"
@@ -60,6 +63,14 @@ def _read_cached_chain(ticker, expiry):
     return calls, puts, spot
 
 
+def _side(merged, suffix):
+    """One leg of a call/put merge, with the suffix stripped off the quote columns."""
+    cols = ["bid", "ask", "lastPrice"]
+    return merged[[c + suffix for c in cols]].rename(
+        columns={c + suffix: c for c in cols}
+    )
+
+
 def _estimate_spot_from_chain(calls, puts):
     """Offline spot proxy: the strike where call and put mids are closest.
 
@@ -70,10 +81,10 @@ def _estimate_spot_from_chain(calls, puts):
     """
     try:
         merged = calls.merge(puts, on="strike", suffixes=("_c", "_p"))
-        c_mid = (merged["bid_c"] + merged["ask_c"]) / 2
-        c_mid = np.where(c_mid > 0, c_mid, merged["lastPrice_c"])
-        p_mid = (merged["bid_p"] + merged["ask_p"]) / 2
-        p_mid = np.where(p_mid > 0, p_mid, merged["lastPrice_p"])
+        # Rebuild one-sided quote frames so the shared mid-price rule applies to
+        # each leg (the merge suffixes the columns it expects).
+        c_mid = mid_prices(_side(merged, "_c"))
+        p_mid = mid_prices(_side(merged, "_p"))
         gap = np.abs(c_mid - p_mid)
         if len(gap) and np.isfinite(gap).any():
             return float(merged["strike"].iloc[int(np.nanargmin(gap))])
@@ -116,6 +127,8 @@ def fetch_option_chain(ticker, expiry=None, use_cache=True):
             yf = _import_yfinance()
             listed = list(yf.Ticker(ticker).options)
         except Exception:
+            # Missing ``data`` extra, no network, or a throttled provider: an
+            # empty listing falls through to the cached expiries below.
             listed = []
         candidates = [e for e in listed if years_to_expiry(e) is not None] or [
             e for e in _cached_expiries(ticker) if years_to_expiry(e) is not None
@@ -203,35 +216,46 @@ def fetch_option_surface(ticker, n_expiries=6, use_cache=True):
     """
 
     def _spread(all_exp):
-        """Pick ``n_expiries`` expiries evenly spread across the sorted listing."""
-        all_exp = list(all_exp)
+        """Pick ``n_expiries`` unexpired expiries evenly spread across the listing.
+
+        Expired dates are dropped *before* the even spread is computed: spreading
+        first and dropping afterwards silently spent one of the ``n_expiries``
+        slots on a dead date, so a chain with stale entries came back short.
+        """
+        all_exp = [e for e in all_exp if years_to_expiry(e) is not None]
         if len(all_exp) <= n_expiries:
             return all_exp
         idx = np.linspace(0, len(all_exp) - 1, n_expiries)
         picks = sorted({int(round(i)) for i in idx})
         return [all_exp[i] for i in picks]
 
+    available = []
     expiries = []
     try:
         yf = _import_yfinance()
-        listed = list(yf.Ticker(ticker).options)
-        expiries = _spread(listed) if listed else []
+        available = list(yf.Ticker(ticker).options)
+        expiries = _spread(available) if available else []
     except Exception:
+        # Missing ``data`` extra / network / throttling -> fall back to disk.
         expiries = []
     if not expiries:
-        expiries = _spread(_cached_expiries(ticker))
+        available = _cached_expiries(ticker)
+        expiries = _spread(available)
     if not expiries:
+        stale = [e for e in available if years_to_expiry(e) is None]
+        detail = (
+            f" (all {len(stale)} available expiries have passed; the on-disk "
+            "cache is stale and needs a live refresh)"
+            if stale
+            else ""
+        )
         raise ValueError(
-            f"No option expiries available for {ticker!r} (live or cached)."
+            f"No option expiries available for {ticker!r} (live or cached).{detail}"
         )
 
     records = []
-    expired = 0
     for expiry in expiries:
         T = years_to_expiry(expiry)
-        if T is None:  # already expired -> not a usable maturity
-            expired += 1
-            continue
         try:
             calls, puts, spot, expiry = fetch_option_chain(
                 ticker, expiry=expiry, use_cache=use_cache
@@ -248,18 +272,18 @@ def fetch_option_surface(ticker, n_expiries=6, use_cache=True):
             }
         )
     if not records:
-        detail = (
-            f" (all {expired} available expiries have passed; the on-disk cache "
-            "is stale and needs a live refresh)"
-            if expired
-            else ""
-        )
-        raise ValueError(f"Could not load any option chain for {ticker!r}.{detail}")
+        raise ValueError(f"Could not load any option chain for {ticker!r}.")
     return records
 
 
 def historical_volatility(ticker, period="1y"):
-    """Annualised historical volatility from daily close-to-close log returns."""
+    """Annualised historical volatility from daily close-to-close log returns.
+
+    **Live-only**: this always queries the provider and raises when it is
+    unreachable, which is what the validation scripts want (a report must not
+    quietly quote last month's vol). For the offline-safe, cache-backed variant
+    over a trailing window use :func:`market_sigma_estimate`.
+    """
     yf = _import_yfinance()
     close = yf.Ticker(ticker).history(period=period)["Close"]
     log_returns = np.log(close / close.shift(1)).dropna()
@@ -294,7 +318,12 @@ _INDEX_DIV_FALLBACK = {"^SPX": 0.013, "^NDX": 0.007, "^RUT": 0.014}
 
 
 def fetch_risk_free_rate() -> float:
-    """Fetch 3-Month US Treasury yield (^IRX) from yfinance as risk-free rate proxy."""
+    """Fetch 3-Month US Treasury yield (^IRX) from yfinance as risk-free rate proxy.
+
+    A single short-tenor proxy, for callers that price one near-term maturity.
+    Anything that spans maturities (the surface, the dashboard) should use
+    :func:`risk_free_rate_for`, which interpolates the whole curve at ``T``.
+    """
     try:
         yf = _import_yfinance()
         history = yf.Ticker("^IRX").history(period="1d")
@@ -339,6 +368,8 @@ def risk_free_rate_for(
         try:
             curve = fetch_risk_free_curve()
         except Exception:
+            # Missing ``data`` extra or an unreachable provider: an empty curve
+            # means the constant fallback below is used instead.
             curve = []
     if not curve:
         return RISK_FREE_FALLBACK
@@ -403,13 +434,25 @@ def fetch_dividend_yield(ticker: str) -> float:
     return _INDEX_DIV_FALLBACK.get(ticker, 0.0)
 
 
-def market_sigma_estimate(ticker, window: int = 30, use_cache: bool = True):
+def market_sigma_estimate(
+    ticker,
+    window: int = 30,
+    use_cache: bool = True,
+    max_age_hours: float | None = None,
+):
     """Annualised realised volatility over the last ``window`` trading days.
 
     Reuses the cached historical series (:func:`fetch_10y_historical_data`) so it
     works offline, and returns ``None`` when there isn't enough data.
+    ``max_age_hours`` is forwarded to bound how stale that cache may be.
+
+    The live-only sibling :func:`historical_volatility` computes the same
+    quantity straight from the provider; prefer this one anywhere the result
+    must still be available without a network.
     """
-    df = fetch_10y_historical_data(ticker, use_cache=use_cache)
+    df = fetch_10y_historical_data(
+        ticker, use_cache=use_cache, max_age_hours=max_age_hours
+    )
     if df.empty or "Close" not in df.columns:
         return None
     returns = np.log(df["Close"] / df["Close"].shift(1)).dropna()
@@ -418,7 +461,12 @@ def market_sigma_estimate(ticker, window: int = 30, use_cache: bool = True):
     return float(returns.tail(window).std() * np.sqrt(252))
 
 
-def fetch_market_snapshot(ticker, T: float = 1.0, use_cache: bool = True) -> dict:
+def fetch_market_snapshot(
+    ticker,
+    T: float = 1.0,
+    use_cache: bool = True,
+    max_age_hours: float | None = None,
+) -> dict:
     """Compose a live market snapshot to auto-fill model inputs.
 
     Returns ``{"spot", "r", "q", "hist_vol", "as_of"}`` where ``spot`` is the
@@ -426,9 +474,16 @@ def fetch_market_snapshot(ticker, T: float = 1.0, use_cache: bool = True) -> dic
     the dividend yield and ``hist_vol`` a realised-vol estimate. Every component
     degrades gracefully (``None`` / fallback) so a partial snapshot is still
     returned when the provider is flaky.
+
+    ``spot`` and ``hist_vol`` both come from the historical series, so
+    ``max_age_hours`` (forwarded to :func:`fetch_10y_historical_data`) is what
+    stops a months-old CSV from being presented as a fresh sync. ``as_of``
+    always reports the date actually used.
     """
     try:
-        df = fetch_10y_historical_data(ticker, use_cache=use_cache)
+        df = fetch_10y_historical_data(
+            ticker, use_cache=use_cache, max_age_hours=max_age_hours
+        )
     except Exception:  # missing dep / network / no cache -> partial snapshot
         df = pd.DataFrame()
     if not df.empty and "Close" in df.columns:
@@ -437,8 +492,10 @@ def fetch_market_snapshot(ticker, T: float = 1.0, use_cache: bool = True) -> dic
     else:
         spot, as_of = None, None
     try:
-        hist_vol = market_sigma_estimate(ticker, use_cache=use_cache)
-    except Exception:
+        hist_vol = market_sigma_estimate(
+            ticker, use_cache=use_cache, max_age_hours=max_age_hours
+        )
+    except Exception:  # same failures as the spot read -> partial snapshot
         hist_vol = None
     return {
         "spot": spot,
@@ -449,8 +506,18 @@ def fetch_market_snapshot(ticker, T: float = 1.0, use_cache: bool = True) -> dic
     }
 
 
+def _read_historical_cache(cache_file: Path) -> pd.DataFrame:
+    """Load a cached historical CSV back into a Date-indexed frame."""
+    df = pd.read_csv(cache_file, parse_dates=["Date"])
+    df.set_index("Date", inplace=True)
+    return df
+
+
 def fetch_10y_historical_data(
-    ticker: str, use_cache: bool = True, period: str = "10y"
+    ticker: str,
+    use_cache: bool = True,
+    period: str = "10y",
+    max_age_hours: float | None = None,
 ) -> pd.DataFrame:
     """Fetch historical daily data for a ticker and cache it.
 
@@ -458,18 +525,41 @@ def fetch_10y_historical_data(
     (e.g. ``"10y"``, ``"5y"``, ``"max"``) and defaults to ``"10y"`` to keep
     this function's original behaviour and on-disk cache filename for
     existing callers.
+
+    ``max_age_hours`` bounds how old the on-disk cache may be before a live
+    refetch is attempted:
+
+    * ``None`` (default) -- any cached copy is served, however old. This is the
+      historical behaviour and what the offline notebooks/tests rely on.
+    * a number -- the cache is used only while it is younger than that many
+      hours; otherwise the provider is queried and the cache rewritten.
+
+    A live fetch that fails (or comes back empty) falls back to the stale cache
+    rather than propagating, so the offline-first guarantee holds: the network
+    is a bonus, not a requirement. With no cache at all there is nothing to fall
+    back to, and the original error (e.g. the "install the ``data`` extra"
+    ``ImportError``) is re-raised unchanged.
     """
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = RAW_DATA_DIR / f"{ticker}_{period}_historical.csv"
-    if use_cache and cache_file.exists():
-        df = pd.read_csv(cache_file, parse_dates=["Date"])
-        df.set_index("Date", inplace=True)
+    fresh = cache_file.exists() and (
+        max_age_hours is None
+        or (time.time() - cache_file.stat().st_mtime) < max_age_hours * 3600.0
+    )
+    if use_cache and fresh:
+        return _read_historical_cache(cache_file)
+
+    try:
+        df = _import_yfinance().Ticker(ticker).history(period=period)
+    except Exception:  # missing ``data`` extra / network / throttling
+        if use_cache and cache_file.exists():
+            return _read_historical_cache(cache_file)  # stale beats nothing
+        raise  # nothing to serve -> let the original error speak
+    if df.empty:
+        if use_cache and cache_file.exists():
+            return _read_historical_cache(cache_file)
         return df
-    yf = _import_yfinance()
-    tk = yf.Ticker(ticker)
-    df = tk.history(period=period)
-    if not df.empty:
-        df.to_csv(cache_file)
+    df.to_csv(cache_file)
     return df
 
 

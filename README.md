@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/DimitrisKotoulias/option-pricing-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/DimitrisKotoulias/option-pricing-terminal/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-79%20passing-brightgreen.svg)](#testing)
-[![Coverage](https://img.shields.io/badge/coverage-76%25-green.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen.svg)](#testing)
+[![Coverage](https://img.shields.io/badge/coverage-84%25-brightgreen.svg)](#testing)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -72,14 +72,14 @@ What makes it a *market* surface rather than a pretty mesh:
   and degrading gracefully offline.
 - **Put-call parity** — verification, implied forward price, and explicit arbitrage
   detection with the offsetting strategy.
-- **Tested** — 79 tests, all offline and deterministic; core pricing and analytics modules
-  sit at 90–100% line coverage (76% overall, plotting and network I/O aside).
+- **Tested** — 111 tests, all offline and deterministic; core pricing and analytics modules
+  sit at 90–100% line coverage (84% overall, network I/O aside), with a CI floor of 80%.
 
 ## Install
 
 ```bash
 pip install -e .                    # core library
-pip install -e ".[dev]"             # + pytest / coverage / black
+pip install -e ".[dev]"             # + pytest / coverage / black / ruff
 pip install -e ".[viz,app,data]"    # + plotting, dashboard, live market data
 ```
 
@@ -106,9 +106,9 @@ src/optpricing/
   pricing/    base_model, black_scholes, monte_carlo, binomial_tree
   analytics/  greeks, greeks_numerical, implied_volatility,
               volatility_surface, put_call_parity
-  data/       market_data_fetcher   (yfinance + on-disk cache)
+  data/       market_data_fetcher (yfinance + on-disk cache), quotes
   utils/      visualization
-tests/        one module per component (pytest, 79 tests, all offline)
+tests/        one module per component (pytest, 111 tests, all offline)
 app/          streamlit_dashboard.py + theme / tabs / panels / data helpers
 scripts/      market_validation.py, export_historical_excel.py
 docs/         mathematical_background.md, images/

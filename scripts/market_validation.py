@@ -8,18 +8,20 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from optpricing import ImpliedVolatilityCalculator, PutCallParity
 from optpricing.data.market_data_fetcher import (
-    fetch_option_chain,
-    historical_volatility,
-    fetch_risk_free_rate,
     fetch_dividend_yield,
+    fetch_option_chain,
+    fetch_risk_free_rate,
+    historical_volatility,
     years_to_expiry,
 )
+from optpricing.data.quotes import mid_prices
 
 TICKERS = ["^SPX", "^NDX", "^RUT"]  # S&P 500, Nasdaq-100, Russell 2000 indices
 DOCS_DIR = Path(__file__).resolve().parents[1] / "docs"
@@ -49,11 +51,9 @@ def near_atm_chains(
     calls = calls.copy()
     puts = puts.copy()
 
-    # Calculate mid price
-    calls["mid"] = (calls["bid"] + calls["ask"]) / 2
-    calls["mid"] = np.where(calls["mid"] > 0, calls["mid"], calls["lastPrice"])
-    puts["mid"] = (puts["bid"] + puts["ask"]) / 2
-    puts["mid"] = np.where(puts["mid"] > 0, puts["mid"], puts["lastPrice"])
+    # Calculate mid price (shared rule, see optpricing.data.quotes)
+    calls["mid"] = mid_prices(calls)
+    puts["mid"] = mid_prices(puts)
 
     # Filter for valid positive prices
     calls = calls[calls["mid"] > 0]

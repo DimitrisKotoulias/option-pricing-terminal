@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from optpricing.data import market_data_fetcher as mdf
+from optpricing.data.quotes import mid_prices
 
 
 # --- risk-free curve interpolation ----------------------------------------- #
@@ -120,3 +121,40 @@ def test_estimate_spot_from_chain_picks_atm():
         }
     )
     assert mdf._estimate_spot_from_chain(calls, puts) == pytest.approx(100.0)
+
+
+def test_option_surface_spends_every_slot_on_a_live_expiry(monkeypatch):
+    """Expired dates are dropped *before* the even spread, not after.
+
+    Spreading first meant a listing padded with dead dates handed some of the
+    ``n_expiries`` picks to expiries that were then thrown away, so the surface
+    came back with fewer maturities than asked for.
+    """
+    today = pd.Timestamp.now().normalize()
+    dead = [str((today - pd.Timedelta(days=d)).date()) for d in (60, 45, 30, 15)]
+    live = [
+        str((today + pd.Timedelta(days=d)).date()) for d in (7, 14, 30, 60, 90, 120)
+    ]
+    monkeypatch.setattr(
+        mdf, "_import_yfinance", lambda: (_ for _ in ()).throw(RuntimeError("offline"))
+    )
+    monkeypatch.setattr(mdf, "_cached_expiries", lambda t: dead + live)
+    monkeypatch.setattr(
+        mdf,
+        "fetch_option_chain",
+        lambda ticker, expiry=None, use_cache=True: (
+            pd.DataFrame({"strike": [100]}),
+            pd.DataFrame({"strike": [100]}),
+            100.0,
+            expiry,
+        ),
+    )
+    records = mdf.fetch_option_surface("^SPX", n_expiries=4)
+    assert len(records) == 4
+    assert all(rec["expiry"] in live for rec in records)
+
+
+# --- shared quote helper ----------------------------------------------------- #
+def test_mid_prices_falls_back_to_last_trade():
+    df = pd.DataFrame({"bid": [4.0, 0.0], "ask": [6.0, 0.0], "lastPrice": [5.5, 2.25]})
+    assert list(mid_prices(df)) == [5.0, 2.25]

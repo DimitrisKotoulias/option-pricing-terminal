@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [ main ]
 
+# Least privilege: nothing here writes to the repo, so the token gets read-only
+# access rather than whatever the repository default happens to be.
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first run's result irrelevant --
+# cancel it instead of paying for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     # Formatting is checked once on a modern Python rather than across the
@@ -13,12 +24,17 @@ jobs:
     # older black that formats differently and would fail spuriously.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # Actions are pinned to commit SHAs: a mutable tag like @v4 is repointed
+      # by the publisher at will, so pinning to it is trusting future code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - run: pip install black
-      - run: black --check src app tests scripts
+      - run: pip install black ruff
+      - run: black --check src app tests scripts conftest.py
+      # black reformats but never reports an unused import or a mis-sorted
+      # import block; ruff (E/F/I) covers what it cannot see.
+      - run: ruff check src app tests scripts conftest.py
 
   test:
     runs-on: ubuntu-latest
@@ -27,9 +43,9 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -43,4 +59,6 @@ jobs:
         if: matrix.python-version != '3.9'
         run: pip install -e ".[app]"
       - name: Run pytest
-        run: pytest --cov=optpricing --cov-report=xml
+        # The coverage report used to be generated and then thrown away. A floor
+        # makes it mean something: coverage can rise, but not silently rot.
+        run: pytest --cov=optpricing --cov-report=term-missing --cov-fail-under=80

@@ -66,12 +66,18 @@ def sensitivity_surface_tab(S, K, T, r, sigma, q) -> None:
     s_axis = np.linspace(S * 0.5, S * 1.5, 30)
     t_axis = np.linspace(0.05, max(T * 2, 0.1), 30)
     s_mesh, t_mesh = np.meshgrid(s_axis, t_axis)
+    # Call the one Greek the surface plots. ``get_all_greeks`` computed eight per
+    # node -- 7200 evaluations to keep 900 -- on every rerun of this tab.
+    method = {
+        "delta": f"delta_{surf_type}",
+        "gamma": "gamma",
+        "vega": "vega",
+        "theta": f"theta_{surf_type}",
+        "rho": f"rho_{surf_type}",
+    }[greek]
     surface = np.array(
         [
-            [
-                Greeks(s, K, t, r, sigma, q).get_all_greeks(surf_type)[greek]
-                for s in s_axis
-            ]
+            [getattr(Greeks(s, K, t, r, sigma, q), method)() for s in s_axis]
             for t in t_axis
         ]
     )
@@ -195,7 +201,8 @@ def vol_surface_tab() -> None:
         )
         st.plotly_chart(style_fig(fig_vs, height=480))
         st.caption(
-            f"{len(vs_records)} expiries · spot {surface.spot:.2f} · "
+            f"{len(vs_records)} expiries · spot {surface.spot:.2f} "
+            f"(as quoted for {vs_records[-1]['expiry']}) · "
             "OTM-side quotes · griddata-smoothed"
         )
     except Exception as e:

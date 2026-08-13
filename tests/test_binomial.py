@@ -36,6 +36,28 @@ def test_american_put_at_least_european():
     assert amer >= euro - 1e-9
 
 
+def test_american_call_has_positive_early_exercise_premium():
+    """A dividend-paying underlying makes early exercise of a call worthwhile.
+
+    The call side of the early-exercise branch had no test at all, so a
+    regression there (e.g. comparing against the put payoff) would have priced
+    silently wrong instead of failing.
+    """
+    args = dict(S=100, K=100, T=1, r=0.05, sigma=0.2, q=0.08, n_steps=500)
+    american = BinomialTreeModel(**args, american=True).call_price()
+    european = BinomialTreeModel(**args, american=False).call_price()
+    assert american > european
+
+
+def test_american_call_equals_european_without_dividends():
+    # With q = 0 it is never optimal to exercise an American call early, so the
+    # two prices must coincide exactly -- not merely be close.
+    args = dict(S=100, K=100, T=1, r=0.05, sigma=0.2, q=0.0, n_steps=500)
+    american = BinomialTreeModel(**args, american=True).call_price()
+    european = BinomialTreeModel(**args, american=False).call_price()
+    assert american == pytest.approx(european, abs=1e-12)
+
+
 def test_non_positive_n_steps_raises():
     # Guard against dt = T / n_steps blowing up (ZeroDivisionError) or nonsense.
     with pytest.raises(ValueError):

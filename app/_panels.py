@@ -5,6 +5,8 @@ The historical-volatility chart and the Excel export control.
 
 from __future__ import annotations
 
+import html
+
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -104,8 +106,13 @@ def historical_and_export_panel() -> None:
                 st.session_state["export_xlsx_bytes"] = None
 
     if st.session_state.get("export_error"):
+        # Escaped: this block renders with unsafe_allow_html, and the message is
+        # whatever the provider/openpyxl raised -- angle brackets in it would
+        # otherwise break out of the div.
+        _err = html.escape(str(st.session_state["export_error"]))
         st.markdown(
-            f'<div class="status status-bad"><span class="status-dot"></span>Export failed: {st.session_state["export_error"]}</div>',
+            '<div class="status status-bad"><span class="status-dot"></span>'
+            f"Export failed: {_err}</div>",
             unsafe_allow_html=True,
         )
 

@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -65,3 +67,36 @@ def test_calculate_vectorized_out_of_bounds_returns_nan():
     prices = np.array([1e6, -5.0])  # above spot (impossible) and non-positive
     ivs = IV.calculate_vectorized(prices, 100, strikes, 1.0, 0.05, "call")
     assert np.isnan(ivs).all()
+
+
+@pytest.mark.parametrize("true_sigma", [4.9, 5.5, 8.0])
+def test_iv_solves_beyond_the_default_bracket(true_sigma):
+    """Vols above 500% are rare (0-DTE, meme stocks) but not arbitrage.
+
+    The bracket used to stop dead at 5.0, so these prices -- which pass the
+    no-arbitrage check -- came back as ``None``, indistinguishable from a
+    genuinely unsolvable quote.
+    """
+    price = BlackScholesModel(S=100, K=100, T=1, r=0.05, sigma=true_sigma).call_price()
+    assert IV.within_no_arbitrage_bounds(price, 100, 100, 1, 0.05, "call")
+    assert IV.calculate(price, 100, 100, 1, 0.05, "call") == pytest.approx(
+        true_sigma, abs=1e-4
+    )
+
+
+def test_within_bounds_separates_the_two_failure_modes():
+    # Above the upper bound: no implied vol exists at all.
+    assert not IV.within_no_arbitrage_bounds(1e6, 100, 100, 1, 0.05, "call")
+    # Inside the bounds: a solution exists even at an extreme vol.
+    assert IV.within_no_arbitrage_bounds(99.99, 100, 100, 1, 0.05, "call")
+
+
+def test_vectorized_ignores_non_positive_strikes_without_warning():
+    """Masked-out rows must not reach log(S/K) (divide-by-zero warning spam)."""
+    prices = np.array([BlackScholesModel(100, 95, 1.0, 0.05, 0.2).call_price(), 3.0])
+    strikes = np.array([95.0, 0.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ivs = IV.calculate_vectorized(prices, 100.0, strikes, 1.0, 0.05, "call")
+    assert ivs[0] == pytest.approx(0.2, abs=1e-4)
+    assert np.isnan(ivs[1])

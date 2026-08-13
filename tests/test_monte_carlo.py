@@ -65,6 +65,33 @@ def test_odd_n_simulations_uses_exact_count():
     assert np.isfinite(std_err) and std_err > 0
 
 
+def test_call_and_put_share_one_simulation():
+    """Both legs must come from the same draws, so they respect parity.
+
+    Pricing the two sides separately runs two independent simulations: twice the
+    cost, and a call/put pair whose parity error is the *sum* of two independent
+    Monte Carlo errors rather than the common-sample residual.
+    """
+    kw = dict(S=100, K=100, T=1, r=0.05, sigma=0.2, n_simulations=200_000)
+    shared = MonteCarloOptionPricer(**kw, seed=5)
+    call, put = shared.call_and_put_price()
+
+    # Same draws -> the first leg reproduces the standalone call exactly.
+    assert call == pytest.approx(MonteCarloOptionPricer(**kw, seed=5).call_price())
+
+    forward = 100 - 100 * np.exp(-0.05)
+    separate = MonteCarloOptionPricer(**kw, seed=5)
+    sep_resid = abs((separate.call_price() - separate.put_price()) - forward)
+    assert abs((call - put) - forward) < sep_resid
+
+
+def test_call_and_put_price_returns_standard_errors():
+    mc = MonteCarloOptionPricer(100, 100, 1, 0.05, 0.2, n_simulations=50_000, seed=2)
+    (call, call_se), (put, put_se) = mc.call_and_put_price(return_std_error=True)
+    assert abs(call - BS.call_price()) < 4 * call_se
+    assert abs(put - BS.put_price()) < 4 * put_se
+
+
 def test_non_positive_n_simulations_raises():
     with pytest.raises(ValueError):
         MonteCarloOptionPricer(100, 100, 1, 0.05, 0.2, n_simulations=0)

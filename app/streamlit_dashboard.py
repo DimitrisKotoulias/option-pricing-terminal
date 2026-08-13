@@ -13,6 +13,7 @@ the visualization panels in ``_tabs.py``.
 from __future__ import annotations
 
 import numpy as np
+import streamlit as st
 
 from optpricing import (
     BinomialTreeModel,
@@ -27,11 +28,11 @@ from optpricing.data.market_data_fetcher import (
     risk_free_rate_for,
 )
 
-import streamlit as st
-
 from _data import (
     cached_market_snapshot,
     cached_risk_free_curve,
+    clear_market_caches,
+    staleness_days,
     underlying_label,
 )
 from _panels import historical_and_export_panel
@@ -106,6 +107,20 @@ def _apply_curve_rate() -> None:
         st.session_state["r_in"] = float(np.clip(rate_pct, 0.0, 15.0))
 
 
+def _request_sync() -> None:
+    """Button callback: drop the memoized reads and flag a sync for this rerun.
+
+    Two things have to happen here rather than in ``_sync_from_market``. The
+    caches must be cleared *before* the refetch or the button would replay the
+    same memoized snapshot forever; and the fetch itself has to run in the main
+    script body, because ``on_click`` callbacks execute before the rerun paints,
+    so a ``st.spinner`` in here would never be visible during a slow (10 years
+    of history) refetch.
+    """
+    clear_market_caches()
+    st.session_state["_force_sync"] = True
+
+
 def _sync_from_market() -> None:
     """Fill spot / rate / dividend / vol from a live market snapshot."""
     ticker = st.session_state.get("underlying_ticker", "^SPX")
@@ -154,13 +169,28 @@ with col_left:
         format_func=underlying_label,
         key="underlying_ticker",
     )
-    st.button("Sync from market", on_click=_sync_from_market, width="stretch")
+    st.button("Sync from market", on_click=_request_sync, width="stretch")
+    if st.session_state.pop("_force_sync", False):
+        with st.spinner("Fetching current market data…"):
+            _sync_from_market()
     if st.session_state.get("mkt_asof"):
-        st.markdown(
-            f'<div class="sync-caption">synced {st.session_state.get("mkt_ticker", "")} '
-            f'· as of {st.session_state["mkt_asof"]} · source: yfinance</div>',
-            unsafe_allow_html=True,
-        )
+        _ticker = st.session_state.get("mkt_ticker", "")
+        _age = staleness_days(st.session_state["mkt_asof"])
+        # Anything past a long weekend is older than the last close, i.e. the
+        # provider was unreachable and this is cached data. Say so, loudly --
+        # silently presenting a months-old spot as "synced" is the whole bug.
+        if _age is not None and _age > 2:
+            st.markdown(
+                f'<div class="sync-caption stale">synced {_ticker} · as of '
+                f'{st.session_state["mkt_asof"]} ({_age} days ago) · cached</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div class="sync-caption">synced {_ticker} '
+                f'· as of {st.session_state["mkt_asof"]} · source: yfinance</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown(
         '<div class="section-label" style="margin-top:1.0rem;">1. Contract Details</div>',
@@ -223,9 +253,20 @@ with col_left:
             market_price, S, K, T, r, iv_type, q
         )
         if solved_iv is None:
+            # Two distinct failures used to share one (often untrue) message: a
+            # price outside the no-arbitrage bounds genuinely has no implied vol,
+            # while a price inside them that the solver misses is a range issue.
+            in_bounds = ImpliedVolatilityCalculator.within_no_arbitrage_bounds(
+                market_price, S, K, T, r, iv_type, q
+            )
+            reason = (
+                "Price implies a volatility beyond the solver's range."
+                if in_bounds
+                else "No arbitrage-free solution for this price."
+            )
             st.markdown(
                 '<div class="status status-bad"><span class="status-dot"></span>'
-                "No arbitrage-free solution for this price.</div>",
+                f"{reason}</div>",
                 unsafe_allow_html=True,
             )
         else:
@@ -272,8 +313,12 @@ with col_center:
 
     bt = BinomialTreeModel(S, K, T, r, sigma, q, n_steps=500)
     mc = MonteCarloOptionPricer(S, K, T, r, sigma, q, n_simulations=mc_sims, seed=1)
-    mc_call, mc_call_se = mc.call_price(return_std_error=True)
-    mc_put, mc_put_se = mc.put_price(return_std_error=True)
+    # One simulation for both sides: pricing them separately doubled the runtime
+    # and peak memory on every slider move (~1.6 GB / ~12 s at 25M paths) and
+    # gave the two legs different samples, so they didn't respect parity.
+    (mc_call, mc_call_se), (mc_put, mc_put_se) = mc.call_and_put_price(
+        return_std_error=True
+    )
     bt_call, bt_put = bt.call_price(), bt.put_price()
 
     p_col1, p_col2, p_col3 = st.columns(3)

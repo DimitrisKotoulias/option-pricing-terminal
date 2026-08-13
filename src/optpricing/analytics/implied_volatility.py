@@ -8,6 +8,14 @@ from scipy.stats import norm
 
 from optpricing.pricing.black_scholes import BlackScholesModel
 
+# Solver search range for sigma. The scalar solver widens the upper end towards
+# SIGMA_MAX when a price brackets above SIGMA_HI (0-DTE and meme-stock quotes do
+# reach several hundred percent); the vectorized surface solver deliberately
+# stays capped at SIGMA_HI, where anything higher is illiquid wing noise.
+SIGMA_LO = 1e-6
+SIGMA_HI = 5.0
+SIGMA_MAX = 50.0
+
 
 class ImpliedVolatilityCalculator:
     """Recover the Black-Scholes volatility implied by a market option price.
@@ -18,7 +26,14 @@ class ImpliedVolatilityCalculator:
     """
 
     @staticmethod
-    def _within_no_arbitrage_bounds(market_price, S, K, T, r, option_type, q):
+    def within_no_arbitrage_bounds(market_price, S, K, T, r, option_type="call", q=0.0):
+        """Whether a quoted price admits *any* implied volatility.
+
+        Public because callers need to tell the two failure modes apart: a price
+        outside these bounds has no solution at all, whereas a price inside them
+        that the solver still misses is a solver-range problem, not an
+        arbitrage one.
+        """
         disc_k = K * np.exp(-r * T)
         disc_s = S * np.exp(-q * T)
         if option_type == "call":
@@ -34,12 +49,16 @@ class ImpliedVolatilityCalculator:
         Returns ``None`` when the price is non-positive, the maturity has
         elapsed, or the price lies outside the no-arbitrage bounds (all cases
         where no real implied volatility exists).
+
+        The Brent bracket starts at ``[SIGMA_LO, SIGMA_HI]`` and, when the price
+        still sits above the value at the upper end, doubles that end up to
+        ``SIGMA_MAX``. Without this a perfectly arbitrage-free price implying
+        (say) 550% vol failed to bracket and came back as ``None``, which is
+        indistinguishable from "no solution exists" for the caller.
         """
         if market_price <= 0 or T <= 0:
             return None
-        if not cls._within_no_arbitrage_bounds(
-            market_price, S, K, T, r, option_type, q
-        ):
+        if not cls.within_no_arbitrage_bounds(market_price, S, K, T, r, option_type, q):
             return None
 
         def objective(sigma):
@@ -47,8 +66,11 @@ class ImpliedVolatilityCalculator:
             price = model.call_price() if option_type == "call" else model.put_price()
             return price - market_price
 
+        hi = SIGMA_HI
+        while objective(hi) < 0 and hi < SIGMA_MAX:
+            hi = min(hi * 2.0, SIGMA_MAX)
         try:
-            return brentq(objective, 1e-6, 5.0, xtol=1e-8, maxiter=200)
+            return brentq(objective, SIGMA_LO, hi, xtol=1e-8, maxiter=200)
         except ValueError:
             return None
 
@@ -112,6 +134,10 @@ class ImpliedVolatilityCalculator:
         is outside the no-arbitrage bounds, or that fail to converge, come back
         as ``NaN`` (so callers can mask them) rather than raising.
 
+        Unlike :meth:`calculate`, sigma stays clipped to ``SIGMA_HI``: a surface
+        point implying more than that is an illiquid wing quote, and letting it
+        through would tower over the mesh rather than inform it.
+
         Parameters
         ----------
         prices, strikes : array-like
@@ -146,10 +172,17 @@ class ImpliedVolatilityCalculator:
         if not valid.any():
             return result
 
+        # Masked-out entries are still carried through every vector op below, so
+        # a non-positive strike would evaluate log(S/K) as a divide-by-zero or a
+        # log of a negative and spray RuntimeWarnings once per iteration even
+        # though the result is discarded. Substitute a harmless strike there.
+        safe_strikes = np.where(valid, strikes, S)
+        log_moneyness = np.log(S / safe_strikes)
+
         sqrt_t = np.sqrt(T)
         sigma = np.full(prices.shape, float(initial_guess))
         for _ in range(max_iter):
-            d1 = (np.log(S / strikes) + (r - q + 0.5 * sigma**2) * T) / (sigma * sqrt_t)
+            d1 = (log_moneyness + (r - q + 0.5 * sigma**2) * T) / (sigma * sqrt_t)
             d2 = d1 - sigma * sqrt_t
             if option_type == "call":
                 price = disc_s * norm.cdf(d1) - disc_k * norm.cdf(d2)
@@ -163,10 +196,10 @@ class ImpliedVolatilityCalculator:
             # RuntimeWarning even though the result is masked out).
             safe = valid & (vega > 1e-12)
             step = np.divide(diff, vega, out=np.zeros_like(diff), where=safe)
-            sigma = np.clip(sigma - step, 1e-6, 5.0)
+            sigma = np.clip(sigma - step, SIGMA_LO, SIGMA_HI)
 
         # Accept only strikes whose final residual is acceptably small.
-        d1 = (np.log(S / strikes) + (r - q + 0.5 * sigma**2) * T) / (sigma * sqrt_t)
+        d1 = (log_moneyness + (r - q + 0.5 * sigma**2) * T) / (sigma * sqrt_t)
         d2 = d1 - sigma * sqrt_t
         if option_type == "call":
             final_price = disc_s * norm.cdf(d1) - disc_k * norm.cdf(d2)

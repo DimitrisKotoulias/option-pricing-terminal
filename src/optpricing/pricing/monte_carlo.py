@@ -42,8 +42,11 @@ class MonteCarloOptionPricer(OptionPricingModel):
         diffusion = self.sigma * np.sqrt(self.T) * z
         return self.S * np.exp(drift + diffusion)
 
-    def _price(self, option_type, antithetic=True, return_std_error=False):
-        terminal = self._simulate_terminal_prices(antithetic=antithetic)
+    def _price(
+        self, option_type, antithetic=True, return_std_error=False, terminal=None
+    ):
+        if terminal is None:
+            terminal = self._simulate_terminal_prices(antithetic=antithetic)
         if option_type == "call":
             payoffs = np.maximum(terminal - self.K, 0.0)
         else:
@@ -83,6 +86,23 @@ class MonteCarloOptionPricer(OptionPricingModel):
 
     def put_price(self, antithetic=True, return_std_error=False):
         return self._price("put", antithetic, return_std_error)
+
+    def call_and_put_price(self, antithetic=True, return_std_error=False):
+        """Price both sides from a **single** set of simulated terminal prices.
+
+        Calling :meth:`call_price` and :meth:`put_price` separately runs two
+        independent simulations: twice the time, twice the peak memory (at 25M
+        paths that is ~1.6 GB and ~12 s), and two different sample sets, so the
+        pair does not satisfy put-call parity even up to Monte Carlo error.
+        Sharing the draws fixes all three.
+
+        Returns ``(call, put)``, or ``((call, call_se), (put, put_se))`` when
+        ``return_std_error`` is set.
+        """
+        terminal = self._simulate_terminal_prices(antithetic=antithetic)
+        call = self._price("call", antithetic, return_std_error, terminal=terminal)
+        put = self._price("put", antithetic, return_std_error, terminal=terminal)
+        return call, put
 
     def convergence_analysis(self, simulation_counts=None, option_type="call"):
         """Price the option across increasing simulation counts.

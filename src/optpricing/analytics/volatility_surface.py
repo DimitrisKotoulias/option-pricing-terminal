@@ -25,12 +25,7 @@ import numpy as np
 from scipy.interpolate import griddata
 
 from optpricing.analytics.implied_volatility import ImpliedVolatilityCalculator
-
-
-def _mid_prices(df):
-    """Mid price per row: ``(bid+ask)/2``, falling back to ``lastPrice``."""
-    mid = (df["bid"] + df["ask"]) / 2.0
-    return np.where(mid > 0, mid, df["lastPrice"])
+from optpricing.data.quotes import mid_prices
 
 
 @dataclass
@@ -39,6 +34,11 @@ class VolatilitySurface:
 
     All volatilities are in **percent**. ``iv_mesh`` has shape
     ``(len(maturity_axis), len(moneyness_axis))``.
+
+    ``spot`` is the spot of the **last** record consumed, not a surface-wide
+    figure: each expiry's moneyness is computed against its own record's spot
+    (which is what makes the mesh correct even if the chains were cached at
+    different times), so this field is only a label for the final chain.
     """
 
     moneyness_axis: np.ndarray
@@ -97,7 +97,7 @@ class VolatilitySurface:
                 if df is None or len(df) == 0:
                     continue
                 frame = df.copy()
-                frame["mid"] = _mid_prices(frame)
+                frame["mid"] = mid_prices(frame)
                 moneyness = frame["strike"] / spot
                 sel = keep(frame["strike"]) & (moneyness >= m_lo) & (moneyness <= m_hi)
                 sel = sel & (frame["mid"] > 0)
@@ -125,8 +125,8 @@ class VolatilitySurface:
                 med = np.median(iv_pct)
                 mad = np.median(np.abs(iv_pct - med))
                 if mad > 0:
-                    keep = np.abs(iv_pct - med) <= 4.0 * 1.4826 * mad
-                    strikes, iv_pct = strikes[keep], iv_pct[keep]
+                    inlier = np.abs(iv_pct - med) <= 4.0 * 1.4826 * mad
+                    strikes, iv_pct = strikes[inlier], iv_pct[inlier]
                 if iv_pct.size == 0:
                     continue
                 raw_m.extend((strikes / spot).tolist())

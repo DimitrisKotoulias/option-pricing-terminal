@@ -24,6 +24,7 @@ CALL = "#2f6fed"  # categorical slot 1 — blue
 PUT = "#0d9488"  # categorical slot 2 — teal
 ACCENT = "#2563eb"
 GOOD = "#047857"
+WARN = "#b45309"
 CRIT = "#b91c1c"
 FONT = "Inter, system-ui, -apple-system, sans-serif"
 MONO_FONT = '"JetBrains Mono", monospace'
@@ -170,6 +171,9 @@ def inject_css() -> None:
             font-size: .68rem; color: {INK_MUTED}; margin: .1rem 0 .6rem;
             font-family: {MONO_FONT};
         }}
+        /* Data older than the last close: amber, so cached values can never
+           pass for a fresh sync. */
+        .sync-caption.stale {{ color: {WARN}; font-weight: 600; }}
 
         /* glassmorphic card */
         .card {{
